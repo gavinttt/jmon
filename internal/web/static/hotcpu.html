@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jmon - CPU Hotspot Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0f1117; color: #e0e0e0; }
+  .nav { background: #1a1d29; padding: 12px 24px; display: flex; align-items: center; gap: 24px;
+         border-bottom: 1px solid #2a2d3a; }
+  .nav a { color: #8b8fa3; text-decoration: none; font-size: 14px; }
+  .nav a:hover, .nav a.active { color: #60a5fa; }
+  .nav .logo { color: #60a5fa; font-weight: bold; font-size: 18px; margin-right: 16px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .card { background: #1a1d29; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+          border: 1px solid #2a2d3a; }
+  .card h2 { font-size: 16px; margin-bottom: 16px; color: #8b8fa3; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; color: #8b8fa3; font-size: 12px;
+       text-transform: uppercase; border-bottom: 1px solid #2a2d3a; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1f2233; font-size: 13px; }
+  tr:hover td { background: #1f2233; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-high { background: #ef444420; color: #ef4444; }
+  .badge-medium { background: #f59e0b20; color: #f59e0b; }
+  .badge-low { background: #22c55e20; color: #22c55e; }
+  .controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+  .controls select, .controls button, .controls input {
+    background: #2a2d3a; color: #e0e0e0; border: 1px solid #3a3d4a;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .controls button:hover { background: #3a3d4a; }
+  .controls label { font-size: 13px; color: #8b8fa3; }
+  .empty { text-align: center; padding: 60px; color: #22c55e; font-size: 16px; }
+  .summary { display: flex; gap: 24px; margin-bottom: 20px; }
+  .summary-card { background: #0f1117; padding: 16px 24px; border-radius: 8px; border: 1px solid #2a2d3a; }
+  .summary-card .num { font-size: 24px; font-weight: bold; }
+  .summary-card .label { font-size: 12px; color: #8b8fa3; margin-top: 4px; }
+  .stack-trace { font-family: 'Menlo', monospace; font-size: 11px; color: #8b8fa3;
+                 white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+                 background: #0f1117; padding: 8px; border-radius: 4px; margin-top: 4px; }
+</style>
+</head><body>
+<div class="nav">
+  <span class="logo">jmon</span>
+  <a href="/dashboard">Dashboard</a>
+  <a href="#" id="nav-memory">Memory</a>
+  <a href="#" id="nav-cpu">CPU</a>
+  <a href="#" id="nav-threads">Threads</a>
+  <a href="#" id="nav-heap">Heap</a>
+  <a href="#" id="nav-leak">Leak Check</a>
+  <a href="#" class="active" id="nav-hotcpu">CPU Hotspot</a>
+<a href="#" id="nav-leak-smart">Smart Leak</a>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>CPU Hotspot Detection</h2>
+    <div class="controls">
+      <select id="duration">
+        <option value="1h">Last 1 Hour</option>
+        <option value="6h" selected>Last 6 Hours</option>
+        <option value="24h">Last 24 Hours</option>
+        <option value="72h">Last 3 Days</option>
+      </select>
+      <label>Threshold:</label>
+      <input id="threshold" type="number" value="10" min="1" max="100" style="width:60px">
+      <span style="font-size:12px;color:#8b8fa3">%</span>
+      <button onclick="loadHotspots()">Analyze</button>
+    </div>
+    <div class="summary" id="summary"></div>
+    <table id="hot-table">
+      <thead><tr><th>Severity</th><th>Thread Name</th><th>State</th><th>Avg CPU</th><th>Max CPU</th><th>Stack Trace</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="empty-msg" style="display:none">No CPU hotspot detected in the selected time range.</div>
+  </div>
+</div>
+<script>
+const pid = location.pathname.split('/')[2];
+document.getElementById('nav-memory').href = '/process/' + pid + '/memory';
+document.getElementById('nav-cpu').href = '/process/' + pid + '/cpu';
+document.getElementById('nav-threads').href = '/process/' + pid + '/threads';
+document.getElementById('nav-heap').href = '/process/' + pid + '/heap';
+document.getElementById('nav-leak').href = '/process/' + pid + '/leak';
+document.getElementById('nav-hotcpu').href = '/process/' + pid + '/hotcpu';
+document.getElementById('nav-leak-smart').href = '/process/' + pid + '/leak-smart';
+
+function sevBadge(sev) {
+  if (sev === 'HIGH') return '<span class="badge badge-high">HIGH</span>';
+  if (sev === 'MEDIUM') return '<span class="badge badge-medium">MEDIUM</span>';
+  return '<span class="badge badge-low">LOW</span>';
+}
+async function loadHotspots() {
+  const duration = document.getElementById('duration').value;
+  const threshold = document.getElementById('threshold').value;
+  const resp = await fetch('/api/process/' + pid + '/hotcpu?from=' + duration + '&threshold=' + threshold);
+  const data = await resp.json();
+  const tbody = document.querySelector('#hot-table tbody');
+  tbody.innerHTML = '';
+  document.getElementById('summary').innerHTML = '';
+
+  if (!data || data.length === 0) {
+    document.getElementById('empty-msg').style.display = 'block';
+    return;
+  }
+  document.getElementById('empty-msg').style.display = 'none';
+
+  const highCount = data.filter(d => d.Severity === 'HIGH').length;
+  const medCount = data.filter(d => d.Severity === 'MEDIUM').length;
+  const maxCPU = data.reduce((m, d) => Math.max(m, d.MaxCPU), 0);
+
+  document.getElementById('summary').innerHTML =
+    '<div class="summary-card"><div class="num" style="color:#ef4444">' + highCount + '</div><div class="label">HIGH Severity</div></div>' +
+    '<div class="summary-card"><div class="num" style="color:#f59e0b">' + medCount + '</div><div class="label">MEDIUM Severity</div></div>' +
+    '<div class="summary-card"><div class="num" style="color:#60a5fa">' + maxCPU.toFixed(1) + '%</div><div class="label">Peak CPU</div></div>';
+
+  for (const d of data) {
+    const tr = document.createElement('tr');
+    const stack = d.StackTrace
+      ? '<details><summary style="cursor:pointer;color:#60a5fa">View</summary><div class="stack-trace">' + d.StackTrace.replace(/</g,'&lt;') + '</div></details>'
+      : '-';
+    tr.innerHTML = '<td>' + sevBadge(d.Severity) + '</td>' +
+      '<td>' + d.ThreadName + '</td>' +
+      '<td>' + (d.State || '-') + '</td>' +
+      '<td>' + d.AvgCPU.toFixed(1) + '%</td>' +
+      '<td>' + d.MaxCPU.toFixed(1) + '%</td>' +
+      '<td>' + stack + '</td>';
+    tbody.appendChild(tr);
+  }
+}
+loadHotspots();
+</script>
+</body></html>

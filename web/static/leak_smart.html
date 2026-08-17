@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Leak Detection</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; }
+  .navbar { background: #161b22; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #30363d; }
+  .navbar a { color: #58a6ff; text-decoration: none; font-size: 13px; }
+  .navbar a:hover { text-decoration: underline; }
+  .navbar .title { font-size: 16px; font-weight: bold; color: #f0f6fc; }
+  .toolbar { padding: 12px 20px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap; background: #161b22; border-bottom: 1px solid #30363d; }
+  .toolbar label { font-size: 13px; color: #8b949e; }
+  .toolbar select, .toolbar button {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 5px 12px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  .toolbar button:hover { background: #30363d; }
+  .toolbar .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .toolbar .btn-primary:hover { background: #2ea043; }
+  .main { display: flex; height: calc(100vh - 95px); }
+  .sidebar { width: 420px; min-width: 350px; border-right: 1px solid #30363d; display: flex; flex-direction: column; background: #0d1117; }
+  .sidebar-header { padding: 10px 15px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+  .sidebar-header .title { font-size: 13px; font-weight: bold; color: #f0f6fc; }
+  .sidebar-header .info { font-size: 11px; color: #8b949e; }
+  .search-box { padding: 8px 15px; border-bottom: 1px solid #30363d; }
+  .search-box input {
+    width: 100%; background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none;
+  }
+  .class-list { flex: 1; overflow-y: auto; padding: 0; }
+  .class-item {
+    display: flex; align-items: center; padding: 6px 15px; gap: 8px;
+    border-bottom: 1px solid #21262d; font-size: 12px; cursor: pointer;
+  }
+  .class-item:hover { background: #161b22; }
+  .class-item.selected { background: #1c2a1e; }
+  .class-item input[type="checkbox"] { accent-color: #238636; }
+  .class-item .name { flex: 1; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .class-item .count { color: #8b949e; font-size: 11px; min-width: 60px; text-align: right; }
+  .class-item .bytes { color: #f0883e; font-size: 11px; min-width: 70px; text-align: right; }
+  .chart-area { flex: 1; display: flex; flex-direction: column; }
+  .chart-container { flex: 1; padding: 15px; }
+  .chart-hint { text-align: center; color: #8b949e; padding: 40px; font-size: 14px; }
+  .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #484f58; font-size: 14px; }
+  .badge { background: #238636; color: #fff; padding: 1px 6px; border-radius: 10px; font-size: 11px; margin-left: 5px; }
+</style>
+</head>
+<body>
+<div class="navbar">
+  <div style="display:flex;align-items:center;gap:15px;">
+    <span class="title">Smart Leak Detection</span>
+    <a href="#" id="nav-dashboard">Dashboard</a>
+    <a href="#" id="nav-memory">Memory</a>
+    <a href="#" id="nav-cpu">CPU</a>
+    <a href="#" id="nav-threads">Threads</a>
+    <a href="#" id="nav-heap">Heap</a>
+    <a href="#" id="nav-leak">Leak Check</a>
+    <a href="#" id="nav-hotcpu">CPU Hotspot</a>
+    <a href="#" class="active" id="nav-leak-smart">Smart Leak</a>
+  </div>
+</div>
+<div class="toolbar">
+  <label>Time Range:</label>
+  <select id="mode">
+    <option value="dense">Last 1 Hour (30s interval)</option>
+    <option value="hourly">Last 7 Days (hourly)</option>
+  </select>
+  <label>Chart Metric:</label>
+  <select id="metric">
+    <option value="bytes">Bytes</option>
+    <option value="count">Instance Count</option>
+  </select>
+  <button class="btn-primary" onclick="loadClasses()">Load Classes</button>
+  <button onclick="selectAll()">Select All</button>
+  <button onclick="clearAll()">Clear All</button>
+  <button class="btn-primary" onclick="analyzeTrend()">Analyze Selected</button>
+  <span id="status" style="font-size:12px;color:#8b949e;"></span>
+</div>
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span class="title">Classes <span class="badge" id="selectedCount">0</span></span>
+      <span class="info" id="snapshotInfo">-</span>
+    </div>
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="Search class name..." oninput="filterClasses()">
+    </div>
+    <div class="class-list" id="classList">
+      <div class="empty-state">Click "Load Classes" to fetch latest snapshot</div>
+    </div>
+  </div>
+  <div class="chart-area">
+    <div class="chart-container" id="chartArea">
+      <div class="chart-hint" id="chartHint">Select classes from the left panel and click "Analyze Selected" to view trends</div>
+      <div id="chartDiv" style="width:100%;height:100%;display:none;"></div>
+    </div>
+  </div>
+</div>
+<script>
+const pid = location.pathname.split('/')[2];
+
+document.getElementById('nav-dashboard').href = '/dashboard';
+document.getElementById('nav-memory').href = '/process/' + pid + '/memory';
+document.getElementById('nav-cpu').href = '/process/' + pid + '/cpu';
+document.getElementById('nav-threads').href = '/process/' + pid + '/threads';
+document.getElementById('nav-heap').href = '/process/' + pid + '/heap';
+document.getElementById('nav-leak').href = '/process/' + pid + '/leak';
+document.getElementById('nav-hotcpu').href = '/process/' + pid + '/hotcpu';
+document.getElementById('nav-leak-smart').href = '/process/' + pid + '/leak-smart';
+
+let allClasses = [];
+let selectedSet = new Set();
+let chart = null;
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
+function fmtNum(n) { return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+
+async function api(path) {
+  const r = await fetch('/api/' + path, { credentials: 'same-origin' });
+  if (r.status === 401) { window.location.href = 'login.html'; return null; }
+  return r.json();
+}
+
+async function loadClasses() {
+  const mode = document.getElementById('mode').value;
+  document.getElementById('status').textContent = 'Loading...';
+  const data = await api('process/' + pid + '/leak-latest?mode=' + mode);
+  document.getElementById('status').textContent = '';
+  if (!data || data.length === 0) {
+    document.getElementById('classList').innerHTML = '<div class="empty-state">No data yet. Waiting for next collection...</div>';
+    document.getElementById('snapshotInfo').textContent = 'No data';
+    return;
+  }
+  allClasses = data;
+  selectedSet.clear();
+  document.getElementById('snapshotInfo').textContent = data.length + ' classes';
+  renderClassList();
+}
+
+function renderClassList() {
+  const filter = document.getElementById('searchInput').value.toLowerCase();
+  const list = document.getElementById('classList');
+  let html = '';
+  let shown = 0;
+  allClasses.forEach((c, i) => {
+    if (filter && !c.class.toLowerCase().includes(filter)) return;
+    const checked = selectedSet.has(c.class) ? 'checked' : '';
+    const selCls = selectedSet.has(c.class) ? 'selected' : '';
+    html += '<div class="class-item ' + selCls + '" onclick="toggleClass(' + i + ')">'
+      + '<input type="checkbox" ' + checked + ' onclick="event.stopPropagation();toggleIndex(' + i + ')">'
+      + '<span class="name" title="' + c.class + '">' + c.class + '</span>'
+      + '<span class="count">' + fmtNum(c.count) + '</span>'
+      + '<span class="bytes">' + fmtBytes(c.bytes) + '</span>'
+      + '</div>';
+    shown++;
+  });
+  list.innerHTML = html || '<div class="empty-state">No matching classes</div>';
+  updateBadge();
+}
+
+function toggleClass(i) {
+  const c = allClasses[i];
+  if (selectedSet.has(c.class)) selectedSet.delete(c.class);
+  else selectedSet.add(c.class);
+  renderClassList();
+}
+
+function toggleIndex(i) {
+  toggleClass(i);
+}
+
+function selectAll() {
+  const filter = document.getElementById('searchInput').value.toLowerCase();
+  allClasses.forEach(c => {
+    if (!filter || c.class.toLowerCase().includes(filter)) selectedSet.add(c.class);
+  });
+  renderClassList();
+}
+
+function clearAll() {
+  selectedSet.clear();
+  renderClassList();
+}
+
+function filterClasses() { renderClassList(); }
+
+function updateBadge() {
+  document.getElementById('selectedCount').textContent = selectedSet.size;
+}
+
+async function analyzeTrend() {
+  if (selectedSet.size === 0) {
+    document.getElementById('chartHint').textContent = 'Please select at least one class from the left panel';
+    document.getElementById('chartHint').style.display = 'block';
+    return;
+  }
+  const mode = document.getElementById('mode').value;
+  const metric = document.getElementById('metric').value;
+  const fromParam = mode === 'dense' ? '1h' : '168h';
+  const classes = encodeURIComponent([...selectedSet].join(','));
+
+  document.getElementById('chartHint').textContent = 'Loading trend data...';
+  document.getElementById('chartHint').style.display = 'block';
+
+  const data = await api('process/' + pid + '/leak-classes?mode=' + mode + '&from=' + fromParam + '&classes=' + classes);
+  if (!data || data.length === 0) {
+    document.getElementById('chartHint').textContent = 'No trend data available yet';
+    return;
+  }
+
+  // Group by class
+  const classMap = {};
+  data.forEach(d => {
+    if (!classMap[d.className]) classMap[d.className] = [];
+    classMap[d.className].push(d);
+  });
+
+  // Build ECharts series
+  const timestamps = [...new Set(data.map(d => new Date(d.timestamp).getTime()))].sort((a,b) => a-b);
+  const series = [];
+  const classNames = Object.keys(classMap);
+
+  classNames.forEach(cn => {
+    const points = classMap[cn];
+    const tsMap = {};
+    points.forEach(p => { tsMap[new Date(p.timestamp).getTime()] = metric === 'bytes' ? p.bytes : p.instanceCount; });
+    series.push({
+      name: cn.length > 50 ? '...' + cn.slice(-47) : cn,
+      type: 'line',
+      stack: 'total',
+      areaStyle: { opacity: 0.3 },
+      lineStyle: { width: 1 },
+      symbol: 'none',
+      emphasis: { focus: 'series' },
+      data: timestamps.map(ts => [ts, tsMap[ts] || 0])
+    });
+  });
+
+  document.getElementById('chartHint').style.display = 'none';
+  document.getElementById('chartDiv').style.display = 'block';
+  if (!chart) {
+    chart = echarts.init(document.getElementById('chartDiv'));
+  }
+
+  const yName = metric === 'bytes' ? 'Bytes' : 'Instance Count';
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter: function(params) {
+        let s = new Date(params[0].data[0]).toLocaleString() + '<br/>';
+        params.forEach(p => {
+          const val = metric === 'bytes' ? fmtBytes(p.data[1]) : fmtNum(p.data[1]);
+          s += p.marker + ' ' + p.seriesName + ': ' + val + '<br/>';
+        });
+        return s;
+      }
+    },
+    legend: {
+      type: 'scroll', bottom: 0, textStyle: { color: '#c9d1d9', fontSize: 10 },
+      pageTextStyle: { color: '#c9d1d9' }
+    },
+    grid: { left: 70, right: 30, top: 30, bottom: 60 },
+    xAxis: {
+      type: 'time',
+      axisLabel: {
+        color: '#8b949e',
+        formatter: function(val) {
+          const d = new Date(val);
+          return mode === 'dense'
+            ? d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0')
+            : (d.getMonth()+1) + '/' + d.getDate();
+        }
+      },
+      axisLine: { lineStyle: { color: '#30363d' } },
+      splitLine: { show: false }
+    },
+    yAxis: {
+      type: 'value', name: yName,
+      axisLabel: {
+        color: '#8b949e',
+        formatter: function(v) { return metric === 'bytes' ? fmtBytes(v) : fmtNum(v); }
+      },
+      axisLine: { lineStyle: { color: '#30363d' } },
+      splitLine: { lineStyle: { color: '#21262d' } }
+    },
+    dataZoom: [{ type: 'slider', bottom: 30, height: 20, borderColor: '#30363d', textStyle: { color: '#8b949e' } }],
+    series: series
+  }, true);
+}
+
+// Auto-refresh
+let refreshTimer = null;
+document.getElementById('mode').addEventListener('change', function() {
+  if (refreshTimer) clearInterval(refreshTimer);
+  const mode = this.value;
+  refreshTimer = setInterval(loadClasses, mode === 'dense' ? 30000 : 300000);
+});
+
+window.addEventListener('resize', () => { if (chart) chart.resize(); });
+</script>
+</body>
+</html>

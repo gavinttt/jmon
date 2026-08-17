@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jmon - Login</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0a0c10; color: #e0e0e0; height: 100vh; overflow: hidden; }
+  .login-wrapper { display: flex; height: 100vh; }
+
+  /* Left: Matrix rain */
+  .matrix-side { flex: 1; position: relative; background: #0a0c10; overflow: hidden; }
+  #matrix-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .matrix-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: linear-gradient(135deg, rgba(10,12,16,0.3) 0%, rgba(10,12,16,0.8) 100%);
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+  }
+  .matrix-overlay .brand { font-size: 48px; font-weight: bold; color: #60a5fa;
+    text-shadow: 0 0 30px rgba(96,165,250,0.5); letter-spacing: 8px; margin-bottom: 12px; }
+  .matrix-overlay .tagline { font-size: 14px; color: #4ade80; opacity: 0.8;
+    font-family: 'Menlo', 'Courier New', monospace; letter-spacing: 2px; }
+
+  /* Right: Login form */
+  .form-side {
+    width: 420px; min-width: 380px; background: #0f1117;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    border-left: 1px solid #1a1d29; padding: 40px;
+  }
+  .form-side h1 { font-size: 24px; margin-bottom: 8px; color: #e0e0e0; }
+  .form-side p { font-size: 13px; color: #8b8fa3; margin-bottom: 32px; }
+  .form-group { width: 100%; margin-bottom: 20px; }
+  .form-group label { display: block; font-size: 12px; color: #8b8fa3;
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .form-group input {
+    width: 100%; padding: 12px 16px; background: #1a1d29; border: 1px solid #2a2d3a;
+    border-radius: 8px; color: #e0e0e0; font-size: 14px; outline: none;
+    transition: border-color 0.2s;
+  }
+  .form-group input:focus { border-color: #60a5fa; }
+  .form-group input::placeholder { color: #4a4d5a; }
+  .login-btn {
+    width: 100%; padding: 12px; background: #60a5fa; color: #0a0c10;
+    border: none; border-radius: 8px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: background 0.2s; margin-top: 8px;
+  }
+  .login-btn:hover { background: #93c5fd; }
+  .login-btn:active { background: #3b82f6; }
+  .error-msg {
+    background: #ef444420; color: #ef4444; padding: 10px 16px; border-radius: 8px;
+    font-size: 13px; margin-bottom: 20px; width: 100%; display: none;
+    border: 1px solid #ef444430;
+  }
+  .footer { margin-top: 32px; font-size: 11px; color: #4a4d5a; }
+
+  @media (max-width: 768px) {
+    .login-wrapper { flex-direction: column; }
+    .matrix-side { height: 200px; flex: none; }
+    .form-side { width: 100%; min-width: auto; flex: 1; border-left: none; border-top: 1px solid #1a1d29; }
+  }
+</style>
+</head><body>
+<div class="login-wrapper">
+  <div class="matrix-side">
+    <canvas id="matrix-canvas"></canvas>
+    <div class="matrix-overlay">
+      <div class="brand">JMON</div>
+      <div class="tagline">JVM Process Monitor &amp; Diagnostics</div>
+    </div>
+  </div>
+  <div class="form-side">
+    <h1>Welcome Back</h1>
+    <p>Sign in to access the monitoring dashboard</p>
+    <div class="error-msg" id="error-msg"></div>
+    <form id="login-form" method="POST" action="/api/login">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" name="username" id="username" placeholder="Enter username" autocomplete="username" autofocus>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" name="password" id="password" placeholder="Enter password" autocomplete="current-password">
+      </div>
+      <button type="submit" class="login-btn">Sign In</button>
+    </form>
+    <div class="footer">jmon &mdash; JVM Process Monitor</div>
+  </div>
+</div>
+<script>
+// Matrix rain effect
+const canvas = document.getElementById('matrix-canvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const chars = '01';
+const fontSize = 14;
+let columns = Math.floor(canvas.width / fontSize);
+let drops = Array(columns).fill(1);
+
+function drawMatrix() {
+  ctx.fillStyle = 'rgba(10, 12, 16, 0.05)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#4ade80';
+  ctx.font = fontSize + 'px Menlo, monospace';
+
+  for (let i = 0; i < drops.length; i++) {
+    const text = chars[Math.floor(Math.random() * chars.length)];
+    const x = i * fontSize;
+    const y = drops[i] * fontSize;
+
+    // Vary green intensity
+    const alpha = 0.3 + Math.random() * 0.7;
+    ctx.fillStyle = `rgba(74, 222, 128, ${alpha})`;
+    ctx.fillText(text, x, y);
+
+    // Bright head
+    if (Math.random() > 0.95) {
+      ctx.fillStyle = 'rgba(200, 255, 200, 0.9)';
+      ctx.fillText(text, x, y);
+    }
+
+    if (y > canvas.height && Math.random() > 0.975) {
+      drops[i] = 0;
+    }
+    drops[i]++;
+  }
+}
+
+setInterval(drawMatrix, 50);
+
+// Handle resize for columns
+window.addEventListener('resize', () => {
+  columns = Math.floor(canvas.width / fontSize);
+  drops = Array(columns).fill(1);
+});
+
+// Login form
+document.getElementById('login-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const errEl = document.getElementById('error-msg');
+  errEl.style.display = 'none';
+
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+
+  const resp = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+
+  if (resp.ok) {
+    window.location.href = '/dashboard';
+  } else {
+    errEl.textContent = 'Invalid username or password';
+    errEl.style.display = 'block';
+  }
+});
+</script>
+</body></html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jmon - Heap Histogram</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0f1117; color: #e0e0e0; }
+  .nav { background: #1a1d29; padding: 12px 24px; display: flex; align-items: center; gap: 24px;
+         border-bottom: 1px solid #2a2d3a; }
+  .nav a { color: #8b8fa3; text-decoration: none; font-size: 14px; }
+  .nav a:hover, .nav a.active { color: #60a5fa; }
+  .nav .logo { color: #60a5fa; font-weight: bold; font-size: 18px; margin-right: 16px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .card { background: #1a1d29; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+          border: 1px solid #2a2d3a; }
+  .card h2 { font-size: 16px; margin-bottom: 16px; color: #8b8fa3; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; color: #8b8fa3; font-size: 12px;
+       text-transform: uppercase; border-bottom: 1px solid #2a2d3a; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1f2233; font-size: 13px; }
+  tr:hover td { background: #1f2233; }
+  .controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+  .controls select, .controls button {
+    background: #2a2d3a; color: #e0e0e0; border: 1px solid #3a3d4a;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .controls button:hover { background: #3a3d4a; }
+</style>
+</head><body>
+<div class="nav">
+  <span class="logo">jmon</span>
+  <a href="/dashboard">Dashboard</a>
+  <a href="#" id="nav-memory">Memory</a>
+  <a href="#" id="nav-cpu">CPU</a>
+  <a href="#" id="nav-threads">Threads</a>
+  <a href="#" class="active" id="nav-heap">Heap</a>
+  <a href="#" id="nav-leak">Leak Check</a>
+  <a href="#" id="nav-hotcpu">CPU Hotspot</a>
+<a href="#" id="nav-leak-smart">Smart Leak</a>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Heap Histogram</h2>
+    <div class="controls">
+      <select id="top-n" onchange="loadHeap()">
+        <option value="20">Top 20</option>
+        <option value="50" selected>Top 50</option>
+        <option value="100">Top 100</option>
+      </select>
+      <button onclick="loadHeap()">Refresh</button>
+    </div>
+    <div id="heap-chart" style="width:100%;height:400px"></div>
+  </div>
+  <div class="card">
+    <h2>Class Details</h2>
+    <table id="heap-table">
+      <thead><tr><th>#</th><th>Class Name</th><th>Instances</th><th>Bytes</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const pid = location.pathname.split('/')[2];
+document.getElementById('nav-memory').href = '/process/' + pid + '/memory';
+document.getElementById('nav-cpu').href = '/process/' + pid + '/cpu';
+document.getElementById('nav-threads').href = '/process/' + pid + '/threads';
+document.getElementById('nav-heap').href = '/process/' + pid + '/heap';
+document.getElementById('nav-leak').href = '/process/' + pid + '/leak';
+document.getElementById('nav-hotcpu').href = '/process/' + pid + '/hotcpu';
+document.getElementById('nav-leak-smart').href = '/process/' + pid + '/leak-smart';
+
+const heapChart = echarts.init(document.getElementById('heap-chart'), 'dark');
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(1) + ' GB';
+}
+async function loadHeap() {
+  const top = document.getElementById('top-n').value;
+  const resp = await fetch('/api/process/' + pid + '/heap?top=' + top);
+  const data = await resp.json();
+  if (!data || data.length === 0) return;
+
+  const top20 = data.slice(0, 20);
+  heapChart.setOption({
+    backgroundColor: '#1a1d29',
+    tooltip: { trigger: 'axis', formatter: function(p) {
+      return p[0].name + '<br/>' + formatBytes(p[0].value);
+    }},
+    grid: { left: 250, right: 40, top: 20, bottom: 40 },
+    xAxis: { type: 'value', axisLabel: { color: '#8b8fa3', formatter: v => formatBytes(v) },
+      splitLine: { lineStyle: { color: '#2a2d3a' } } },
+    yAxis: { type: 'category',
+      data: top20.map(d => d.ClassName.length > 40 ? '...' + d.ClassName.slice(-37) : d.ClassName).reverse(),
+      axisLabel: { color: '#8b8fa3', fontSize: 11 } },
+    series: [{ type: 'bar', data: top20.map(d => d.Bytes).reverse(),
+      itemStyle: { color: '#60a5fa' }, barMaxWidth: 20 }]
+  });
+
+  const tbody = document.querySelector('#heap-table tbody');
+  tbody.innerHTML = '';
+  data.forEach((d, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + (i+1) + '</td><td style="font-family:monospace;font-size:12px">' + d.ClassName + '</td><td>' + d.InstanceCount.toLocaleString() + '</td><td>' + formatBytes(d.Bytes) + '</td>';
+    tbody.appendChild(tr);
+  });
+}
+loadHeap();
+window.addEventListener('resize', () => heapChart.resize());
+</script>
+</body></html>

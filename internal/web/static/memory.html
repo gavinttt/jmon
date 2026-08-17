@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jmon - Memory River Chart</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0f1117; color: #e0e0e0; }
+  .nav { background: #1a1d29; padding: 12px 24px; display: flex; align-items: center; gap: 24px;
+         border-bottom: 1px solid #2a2d3a; }
+  .nav a { color: #8b8fa3; text-decoration: none; font-size: 14px; }
+  .nav a:hover, .nav a.active { color: #60a5fa; }
+  .nav .logo { color: #60a5fa; font-weight: bold; font-size: 18px; margin-right: 16px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .card { background: #1a1d29; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+          border: 1px solid #2a2d3a; }
+  .card h2 { font-size: 16px; margin-bottom: 16px; color: #8b8fa3; }
+  .chart { width: 100%; height: 500px; }
+  .chart-sm { width: 100%; height: 400px; }
+  .controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+  .controls select, .controls button {
+    background: #2a2d3a; color: #e0e0e0; border: 1px solid #3a3d4a;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .controls button:hover { background: #3a3d4a; }
+</style>
+</head><body>
+<div class="nav">
+  <span class="logo">jmon</span>
+  <a href="/dashboard">Dashboard</a>
+  <a href="#" class="active" id="nav-memory">Memory</a>
+  <a href="#" id="nav-cpu">CPU</a>
+  <a href="#" id="nav-threads">Threads</a>
+  <a href="#" id="nav-heap">Heap</a>
+  <a href="#" id="nav-leak">Leak Check</a>
+  <a href="#" id="nav-hotcpu">CPU Hotspot</a>
+<a href="#" id="nav-leak-smart">Smart Leak</a>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Memory Usage - River Chart (Streamgraph)</h2>
+    <div class="controls">
+      <select id="duration" onchange="loadChart()">
+        <option value="1h">Last 1 Hour</option>
+        <option value="6h" selected>Last 6 Hours</option>
+        <option value="24h">Last 24 Hours</option>
+        <option value="72h">Last 3 Days</option>
+        <option value="168h">Last 7 Days</option>
+        <option value="720h">Last 30 Days</option>
+      </select>
+      <button onclick="loadChart()">Refresh</button>
+    </div>
+    <div id="river-chart" class="chart"></div>
+  </div>
+  <div class="card">
+    <h2>Memory Areas - Stacked View</h2>
+    <div id="stacked-chart" class="chart-sm"></div>
+  </div>
+</div>
+<script>
+const pid = location.pathname.split('/')[2];
+document.getElementById('nav-memory').href = '/process/' + pid + '/memory';
+document.getElementById('nav-cpu').href = '/process/' + pid + '/cpu';
+document.getElementById('nav-threads').href = '/process/' + pid + '/threads';
+document.getElementById('nav-heap').href = '/process/' + pid + '/heap';
+document.getElementById('nav-leak').href = '/process/' + pid + '/leak';
+document.getElementById('nav-hotcpu').href = '/process/' + pid + '/hotcpu';
+document.getElementById('nav-leak-smart').href = '/process/' + pid + '/leak-smart';
+
+const riverChart = echarts.init(document.getElementById('river-chart'), 'dark');
+const stackedChart = echarts.init(document.getElementById('stacked-chart'), 'dark');
+
+async function loadChart() {
+  const duration = document.getElementById('duration').value;
+  const resp = await fetch('/api/process/' + pid + '/memory?from=' + duration);
+  const data = await resp.json();
+  if (!data || data.length === 0) { riverChart.clear(); stackedChart.clear(); return; }
+
+  const times = data.map(d => d.Timestamp);
+  const layers = ['Eden', 'Survivor', 'Old Gen', 'Metaspace'];
+  const dataMap = {
+    'Eden': data.map(d => +(d.EdenUsed/1024).toFixed(2)),
+    'Survivor': data.map(d => +(d.SurvivorUsed/1024).toFixed(2)),
+    'Old Gen': data.map(d => +(d.OldUsed/1024).toFixed(2)),
+    'Metaspace': data.map(d => +(d.MetaUsed/1024).toFixed(2)),
+  };
+
+  // River / Streamgraph chart using themeRiver
+  const riverData = [];
+  for (let i = 0; i < times.length; i++) {
+    for (const layer of layers) {
+      riverData.push([times[i], dataMap[layer][i], layer]);
+    }
+  }
+
+  riverChart.setOption({
+    backgroundColor: '#1a1d29',
+    tooltip: { trigger: 'item', formatter: function(p) {
+      return p.value[2] + '<br/>' + p.value[0] + ': ' + p.value[1] + ' MB';
+    }},
+    legend: { data: layers, textStyle: { color: '#8b8fa3' }, top: 10 },
+    singleAxis: {
+      top: 50, bottom: 50,
+      axisTick: {}, axisLabel: { color: '#8b8fa3', formatter: v => {
+        const d = new Date(v);
+        return ('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+      }},
+      type: 'time', boundaryGap: ['10%', '10%'],
+      splitLine: { show: true, lineStyle: { color: '#2a2d3a' } }
+    },
+    series: [{
+      type: 'themeRiver',
+      emphasis: { itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,0,0,0.8)' }},
+      data: riverData,
+      color: ['#60a5fa', '#a78bfa', '#f59e0b', '#22c55e'],
+      label: { show: false }
+    }]
+  });
+
+  // Stacked area chart (alternative view)
+  stackedChart.setOption({
+    backgroundColor: '#1a1d29',
+    tooltip: { trigger: 'axis' },
+    legend: { data: layers, textStyle: { color: '#8b8fa3' } },
+    grid: { left: 60, right: 20, top: 40, bottom: 40 },
+    xAxis: { type: 'time', boundaryGap: false,
+      axisLabel: { color: '#8b8fa3', formatter: v => {
+        const d = new Date(v);
+        return ('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+      }} },
+    yAxis: { type: 'value', name: 'MB', axisLabel: { color: '#8b8fa3' },
+      splitLine: { lineStyle: { color: '#2a2d3a' } } },
+    series: layers.map((name, i) => ({
+      name, type: 'line', stack: 'memory', smooth: true,
+      areaStyle: { opacity: 0.6 }, lineStyle: { width: 1 },
+      symbol: 'none',
+      data: times.map((t, idx) => [t, dataMap[name][idx]]),
+      itemStyle: { color: ['#60a5fa', '#a78bfa', '#f59e0b', '#22c55e'][i] }
+    }))
+  });
+}
+loadChart();
+window.addEventListener('resize', () => { riverChart.resize(); stackedChart.resize(); });
+</script>
+</body></html>

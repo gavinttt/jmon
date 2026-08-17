@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jmon - Java Process Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0f1117; color: #e0e0e0; }
+  .nav { background: #1a1d29; padding: 12px 24px; display: flex; align-items: center; gap: 24px;
+         border-bottom: 1px solid #2a2d3a; }
+  .nav a { color: #8b8fa3; text-decoration: none; font-size: 14px; }
+  .nav a:hover, .nav a.active { color: #60a5fa; }
+  .nav .logo { color: #60a5fa; font-weight: bold; font-size: 18px; margin-right: 16px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .card { background: #1a1d29; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+          border: 1px solid #2a2d3a; }
+  .card h2 { font-size: 16px; margin-bottom: 16px; color: #8b8fa3; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; color: #8b8fa3; font-size: 12px;
+       text-transform: uppercase; border-bottom: 1px solid #2a2d3a; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1f2233; font-size: 13px; }
+  tr:hover td { background: #1f2233; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-high { background: #ef444420; color: #ef4444; }
+  .badge-medium { background: #f59e0b20; color: #f59e0b; }
+  .badge-low { background: #22c55e20; color: #22c55e; }
+  .badge-run { background: #22c55e20; color: #22c55e; }
+  .badge-wait { background: #f59e0b20; color: #f59e0b; }
+  .badge-block { background: #ef444420; color: #ef4444; }
+  .chart { width: 100%; height: 500px; }
+  .controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+  .controls select, .controls button {
+    background: #2a2d3a; color: #e0e0e0; border: 1px solid #3a3d4a;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .controls button:hover { background: #3a3d4a; }
+  .stack-trace { font-family: 'Menlo', monospace; font-size: 11px; color: #8b8fa3;
+                 white-space: pre-wrap; max-height: 200px; overflow-y: auto;
+                 background: #0f1117; padding: 8px; border-radius: 4px; margin-top: 4px; }
+  .empty { text-align: center; padding: 60px; color: #8b8fa3; }
+</style>
+</head><body>
+<div class="nav">
+  <span class="logo">jmon</span>
+  <a href="/dashboard" class="active">Dashboard</a>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Java Processes</h2>
+    <table id="proc-table">
+      <thead><tr><th>PID</th><th>Name</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="empty-msg" style="display:none">No Java processes found. Make sure JDK tools (jps) are in PATH.</div>
+  </div>
+</div>
+<script>
+async function loadProcesses() {
+  try {
+    const resp = await fetch('/api/processes');
+    if (!resp.ok) {
+      const err = await resp.json();
+      document.getElementById('empty-msg').textContent = 'Error: ' + (err.error || resp.statusText) + '. Please make sure JDK tools (jps) are in PATH.';
+      document.getElementById('empty-msg').style.display = 'block';
+      return;
+    }
+    const procs = await resp.json();
+    const tbody = document.querySelector('#proc-table tbody');
+    tbody.innerHTML = '';
+    if (!procs || procs.length === 0) {
+      document.getElementById('empty-msg').textContent = 'No Java processes found. Make sure JDK tools (jps) are in PATH.';
+      document.getElementById('empty-msg').style.display = 'block';
+      return;
+    }
+    document.getElementById('empty-msg').style.display = 'none';
+    for (const p of procs) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${p.PID}</td>
+        <td>${p.Name}</td>
+        <td>
+          <a href="/process/${p.PID}/memory" style="color:#60a5fa;margin-right:8px">Memory</a>
+          <a href="/process/${p.PID}/cpu" style="color:#60a5fa;margin-right:8px">CPU</a>
+          <a href="/process/${p.PID}/threads" style="color:#60a5fa;margin-right:8px">Threads</a>
+          <a href="/process/${p.PID}/heap" style="color:#60a5fa;margin-right:8px">Heap</a>
+          <a href="/process/${p.PID}/leak" style="color:#ef4444;margin-right:8px">Leak Check</a>
+          <a href="/process/${p.PID}/hotcpu" style="color:#f59e0b;margin-right:8px">CPU Hotspot</a>
+<a href="/process/${p.PID}/leak-smart" style="color:#a78bfa;margin-right:8px">Smart Leak</a>
+        </td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    document.getElementById('empty-msg').textContent = 'Failed to load processes: ' + e.message;
+    document.getElementById('empty-msg').style.display = 'block';
+  }
+}
+loadProcesses();
+setInterval(loadProcesses, 10000);
+</script>
+</body></html>
