@@ -182,10 +182,14 @@ func Run(ctx context.Context, cfg *Config) error {
 	log.Println("Cleaning up data older than 30 days...")
 	db.Cleanup(30)
 	db.CleanupLeakData()
+	db.CleanupHotspotData()
 
 	// Load auth config
 	appCfg, _ := config.Load()
 	log.Printf("Auth: username=%s", appCfg.Username)
+
+	// Method-level hotspot sampling (JFR / jstack), switched per process from the UI
+	hotspots := newHotspotManager(db, cfg.Interval, appCfg.JfrPath)
 
 	// Start web server
 	server := web.NewServer(db, cfg.Port, appCfg.Username, appCfg.Password)
@@ -203,40 +207,53 @@ func Run(ctx context.Context, cfg *Config) error {
 	log.Printf("Daemon started, collecting every %s", cfg.Interval)
 
 	// Collect immediately on start
-	collectOnce(db)
-	collectLeakHourly(db) // initial hourly snapshot
+	hot := collectOnce(db, hotspots)
+	collectLeakHourly(db, hot) // initial hourly snapshot
 	lastHourlyHour := time.Now().Hour()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("Daemon shutting down...")
+			hotspots.shutdown()
 			server.Stop()
 			return nil
 		case <-ticker.C:
-			collectOnce(db)
-			// Hourly leak snapshot at the top of the hour (e.g. 1:00, 2:00, ...)
-			nowHour := time.Now().Hour()
-			if nowHour != lastHourlyHour {
-				collectLeakHourly(db)
-				lastHourlyHour = nowHour
+			hot := collectOnce(db, hotspots)
+			// Hourly snapshots at the top of the hour (e.g. 1:00, 2:00, ...)
+			now := time.Now()
+			if now.Hour() != lastHourlyHour {
+				collectLeakHourly(db, hot)
+				hotspots.aggregateHourly(now)
+				lastHourlyHour = now.Hour()
 			}
-			// Periodic leak data cleanup
+			// Periodic retention cleanup (after hourly aggregation so dense rows are still present)
 			db.CleanupLeakData()
+			db.CleanupHotspotData()
 		}
 	}
 }
 
-func collectOnce(db *storage.DB) {
+// collectOnce runs one collection cycle and returns the pids with hotspot sampling active
+// (for which jmap must not be run).
+func collectOnce(db *storage.DB, hotspots *hotspotManager) map[int]bool {
 	procs, err := collector.CollectJavaProcesses()
 	if err != nil {
 		log.Printf("Failed to discover Java processes: %v", err)
-		return
+		return nil
 	}
+
+	alive := make(map[int]bool)
+	for _, proc := range procs {
+		if collector.IsProcessAlive(proc.PID) {
+			alive[proc.PID] = true
+		}
+	}
+	hot := hotspots.refresh(alive)
 
 	for _, proc := range procs {
 		// Skip if process already exited
-		if !collector.IsProcessAlive(proc.PID) {
+		if !alive[proc.PID] {
 			log.Printf("[pid=%d] process exited, skipping", proc.PID)
 			continue
 		}
@@ -268,9 +285,11 @@ func collectOnce(db *storage.DB) {
 			}
 		}
 
-		// Collect heap histogram (limit to top 300 for leak detection)
-		heapEntries, err := collector.CollectHeapHisto(proc.PID)
-		if err != nil {
+		// Hotspot sampling replaces the heap histogram: jmap is skipped for this process so
+		// that no GC is provoked while profiling.
+		if hot[proc.PID] {
+			hotspots.sample(proc.PID, threads)
+		} else if heapEntries, err := collector.CollectHeapHisto(proc.PID); err != nil {
 			log.Printf("[pid=%d] jmap failed: %v", proc.PID, err)
 		} else {
 			// Save top 100 to heap_histo (general monitoring)
@@ -338,11 +357,13 @@ func collectOnce(db *storage.DB) {
 		}
 	}
 
-	log.Printf("Collection complete: %d Java processes", len(procs))
+	log.Printf("Collection complete: %d Java processes (%d with hotspot sampling)", len(procs), len(hot))
+	return hot
 }
 
-// collectLeakHourly collects heap histogram for hourly leak detection (top 300)
-func collectLeakHourly(db *storage.DB) {
+// collectLeakHourly collects heap histogram for hourly leak detection (top 300).
+// Processes in `skip` (hotspot sampling active) are left alone so jmap never runs on them.
+func collectLeakHourly(db *storage.DB, skip map[int]bool) {
 	procs, err := collector.CollectJavaProcesses()
 	if err != nil {
 		log.Printf("[leak-hourly] Failed to discover Java processes: %v", err)
@@ -350,7 +371,7 @@ func collectLeakHourly(db *storage.DB) {
 	}
 
 	for _, proc := range procs {
-		if !collector.IsProcessAlive(proc.PID) {
+		if !collector.IsProcessAlive(proc.PID) || skip[proc.PID] {
 			continue
 		}
 

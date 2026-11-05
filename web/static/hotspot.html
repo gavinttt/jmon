@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jmon - Method Hotspot</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background: #0f1117; color: #e0e0e0; }
+  .nav { background: #1a1d29; padding: 12px 24px; display: flex; align-items: center; gap: 24px;
+         border-bottom: 1px solid #2a2d3a; }
+  .nav a { color: #8b8fa3; text-decoration: none; font-size: 14px; }
+  .nav a:hover, .nav a.active { color: #60a5fa; }
+  .nav .logo { color: #60a5fa; font-weight: bold; font-size: 18px; margin-right: 16px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .card { background: #1a1d29; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+          border: 1px solid #2a2d3a; }
+  .card h2 { font-size: 16px; margin-bottom: 16px; color: #8b8fa3; display: flex; align-items: center; gap: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; color: #8b8fa3; font-size: 12px;
+       text-transform: uppercase; border-bottom: 1px solid #2a2d3a; }
+  td { padding: 8px 12px; border-bottom: 1px solid #1f2233; font-size: 13px; }
+  td.method { font-family: 'Menlo', monospace; font-size: 12px; word-break: break-all; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  tr:hover td { background: #1f2233; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge-off { background: #8b8fa320; color: #8b8fa3; }
+  .badge-pending { background: #f59e0b20; color: #f59e0b; }
+  .badge-jfr { background: #22c55e20; color: #22c55e; }
+  .badge-jstack { background: #60a5fa20; color: #60a5fa; }
+  .controls { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+  .controls select, .controls button, .controls input {
+    background: #2a2d3a; color: #e0e0e0; border: 1px solid #3a3d4a;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .controls button:hover { background: #3a3d4a; }
+  .controls button.primary { background: #2563eb; border-color: #2563eb; }
+  .controls button.primary:hover { background: #1d4ed8; }
+  .controls button.danger { background: #7f1d1d; border-color: #991b1b; }
+  .controls button.danger:hover { background: #991b1b; }
+  .controls label { font-size: 13px; color: #8b8fa3; display: flex; align-items: center; gap: 6px; }
+  .empty { text-align: center; padding: 60px; color: #8b8fa3; font-size: 14px; }
+  .summary { display: flex; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
+  .summary-card { background: #0f1117; padding: 16px 24px; border-radius: 8px; border: 1px solid #2a2d3a; min-width: 160px; }
+  .summary-card .num { font-size: 22px; font-weight: bold; }
+  .summary-card .label { font-size: 12px; color: #8b8fa3; margin-top: 4px; }
+  .status-line { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .detail { font-size: 12px; color: #8b8fa3; line-height: 1.6; }
+  .warn { font-size: 12px; color: #f59e0b; background: #f59e0b12; border: 1px solid #f59e0b40;
+          padding: 8px 12px; border-radius: 6px; margin-top: 10px; line-height: 1.6; }
+  .chart { width: 100%; height: 320px; }
+  #flame { width: 100%; min-height: 320px; }
+  .bar { height: 6px; background: #2a2d3a; border-radius: 3px; overflow: hidden; min-width: 80px; }
+  .bar > div { height: 100%; background: #ef4444; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 1000px) { .two-col { grid-template-columns: 1fr; } }
+  .hint { font-size: 12px; color: #8b8fa3; font-weight: normal; }
+</style>
+</head><body>
+<div class="nav">
+  <span class="logo">jmon</span>
+  <a href="/dashboard">Dashboard</a>
+  <a href="#" id="nav-memory">Memory</a>
+  <a href="#" id="nav-cpu">CPU</a>
+  <a href="#" id="nav-threads">Threads</a>
+  <a href="#" id="nav-heap">Heap</a>
+  <a href="#" id="nav-leak">Leak Check</a>
+  <a href="#" id="nav-hotcpu">CPU Hotspot</a>
+  <a href="#" id="nav-leak-smart">Smart Leak</a>
+  <a href="#" class="active" id="nav-hotspot">Method Hotspot</a>
+</div>
+<div class="container">
+
+  <div class="card">
+    <h2>Method Hotspot Sampling</h2>
+    <div class="status-line">
+      <span id="status-badge" class="badge badge-off">LOADING</span>
+      <span id="status-text" class="detail"></span>
+      <span style="flex:1"></span>
+      <div class="controls" style="margin:0">
+        <button id="toggle-btn" class="primary" onclick="toggleSampling()" disabled>Enable Sampling</button>
+      </div>
+    </div>
+    <div id="status-detail" class="detail"></div>
+    <div class="warn">
+      While hotspot sampling is enabled for this process, <b>jmap heap-histogram collection is suspended</b>
+      (Heap / Leak Check / Smart Leak stop updating) so that profiling never provokes a GC.
+      Sampling runs at the same interval as thread-stack collection; the last hour is kept at full resolution
+      and one aggregated snapshot per hour is kept for 7 days.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Analysis</h2>
+    <div class="controls">
+      <select id="range" onchange="loadReport()">
+        <option value="dense:1h" selected>Last 1 Hour (every interval)</option>
+        <option value="hourly:24h">Last 24 Hours (hourly)</option>
+        <option value="hourly:72h">Last 3 Days (hourly)</option>
+        <option value="hourly:168h">Last 7 Days (hourly)</option>
+      </select>
+      <select id="kind" onchange="loadReport()">
+        <option value="cpu" selected>CPU (execution samples)</option>
+        <option value="alloc">Allocation (bytes, JFR only)</option>
+      </select>
+      <label>Top <input id="topn" type="number" value="30" min="5" max="200" style="width:64px" onchange="loadReport()"></label>
+      <button onclick="loadReport()">Refresh</button>
+      <label><input type="checkbox" id="auto" checked> Auto refresh (30s)</label>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="empty" id="empty-msg" style="display:none"></div>
+  </div>
+
+  <div class="card" id="flame-card">
+    <h2>Flame Graph <span class="hint">click a frame to zoom, click "all" to reset</span>
+      <span style="flex:1"></span>
+      <div class="controls" style="margin:0"><button onclick="resetFlame()">Reset Zoom</button></div>
+    </h2>
+    <div id="flame"></div>
+  </div>
+
+  <div class="card" id="timeline-card">
+    <h2>Top Methods Over Time <span class="hint">self weight per snapshot</span></h2>
+    <div id="timeline" class="chart"></div>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <h2>Hot Methods (Self) <span class="hint">time spent in the method itself</span></h2>
+      <table id="self-table">
+        <thead><tr><th>#</th><th>Method</th><th class="num">Self</th><th class="num">Self %</th><th style="width:100px"></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Hot Paths (Total) <span class="hint">method plus everything it calls</span></h2>
+      <table id="total-table">
+        <thead><tr><th>#</th><th>Method</th><th class="num">Total</th><th class="num">Total %</th><th style="width:100px"></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const pid = location.pathname.split('/')[2];
+for (const [id, page] of [['nav-memory','memory'],['nav-cpu','cpu'],['nav-threads','threads'],['nav-heap','heap'],
+    ['nav-leak','leak'],['nav-hotcpu','hotcpu'],['nav-leak-smart','leak-smart'],['nav-hotspot','hotspot']]) {
+  document.getElementById(id).href = '/process/' + pid + '/' + page;
+}
+
+let setting = null;
+let currentKind = 'cpu';
+let flameRoot = null;     // full tree from the API
+let flameFocus = null;    // currently zoomed node
+const flameChart = echarts.init(document.getElementById('flame'), 'dark', { renderer: 'canvas' });
+const timelineChart = echarts.init(document.getElementById('timeline'), 'dark');
+window.addEventListener('resize', () => { flameChart.resize(); timelineChart.resize(); });
+
+// ---------- status / toggle ----------
+async function loadStatus() {
+  const resp = await fetch('/api/process/' + pid + '/hotspot-status');
+  if (!resp.ok) return;
+  const data = await resp.json();
+  setting = data.setting;
+  const stats = data.stats || {};
+  const badge = document.getElementById('status-badge');
+  const text = document.getElementById('status-text');
+  const detail = document.getElementById('status-detail');
+  const btn = document.getElementById('toggle-btn');
+  btn.disabled = false;
+
+  if (!setting.enabled) {
+    badge.className = 'badge badge-off'; badge.textContent = 'DISABLED';
+    text.textContent = 'Hotspot sampling is off; jmap heap histogram collection is active.';
+    btn.textContent = 'Enable Sampling'; btn.className = 'primary';
+  } else if (!setting.mode) {
+    badge.className = 'badge badge-pending'; badge.textContent = 'STARTING';
+    text.textContent = 'Waiting for the daemon to pick up the switch (next collection cycle)...';
+    btn.textContent = 'Disable Sampling'; btn.className = 'danger';
+  } else {
+    badge.className = 'badge badge-' + setting.mode;
+    badge.textContent = setting.mode === 'jfr' ? 'RUNNING · JFR' : 'RUNNING · JSTACK (LOW PRECISION)';
+    text.textContent = (stats.denseSnapshots || 0) + ' snapshots in the last hour, ' +
+      (stats.hourlySnapshots || 0) + ' hourly snapshots' +
+      (stats.lastSampleAt ? ', last sample ' + fmtTime(stats.lastSampleAt) : '');
+    btn.textContent = 'Disable Sampling'; btn.className = 'danger';
+  }
+  detail.textContent = setting.detail || '';
+
+  const kindSel = document.getElementById('kind');
+  kindSel.options[1].disabled = setting.mode === 'jstack' && !stats.hasAlloc;
+}
+
+async function toggleSampling() {
+  const enable = !(setting && setting.enabled);
+  if (enable && !confirm('Enable method hotspot sampling for PID ' + pid + '?\n\n' +
+      'jmap heap-histogram collection will be SUSPENDED for this process (Heap / Leak Check / Smart Leak stop updating) ' +
+      'so that no GC is triggered while profiling.')) return;
+  const btn = document.getElementById('toggle-btn');
+  btn.disabled = true;
+  await fetch('/api/process/' + pid + '/hotspot-toggle', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: enable })
+  });
+  await loadStatus();
+}
+
+// ---------- report ----------
+async function loadReport() {
+  const [mode, range] = document.getElementById('range').value.split(':');
+  currentKind = document.getElementById('kind').value;
+  const top = document.getElementById('topn').value;
+  const resp = await fetch('/api/process/' + pid + '/hotspot?mode=' + mode + '&from=' + range + '&kind=' + currentKind + '&top=' + top);
+  if (!resp.ok) return;
+  const rep = await resp.json();
+
+  const empty = document.getElementById('empty-msg');
+  const hasData = rep.totalWeight > 0;
+  document.getElementById('flame-card').style.display = hasData ? '' : 'none';
+  document.getElementById('timeline-card').style.display = hasData ? '' : 'none';
+  if (!hasData) {
+    empty.style.display = 'block';
+    empty.textContent = setting && setting.enabled
+      ? 'No samples yet for this range/kind. Samples appear after the next collection cycle' +
+        (currentKind === 'alloc' ? ' (allocation data requires JFR mode).' : '.')
+      : 'Sampling is disabled. Enable it above to start collecting method-level hotspots.';
+    document.getElementById('summary').innerHTML = '';
+    renderTable('self-table', [], 'self');
+    renderTable('total-table', [], 'total');
+    return;
+  }
+  empty.style.display = 'none';
+
+  const topSelf = rep.self[0];
+  document.getElementById('summary').innerHTML =
+    card(fmtWeight(rep.totalWeight), currentKind === 'cpu' ? 'Samples' : 'Allocated (sampled)', '#60a5fa') +
+    card(rep.snapshots, 'Snapshots', '#e0e0e0') +
+    card(rep.uniqueStacks, 'Unique Stacks', '#e0e0e0') +
+    card(topSelf ? topSelf.selfPct.toFixed(1) + '%' : '-', 'Hottest: ' + (topSelf ? shortName(topSelf.name) : '-'), '#ef4444');
+
+  renderTable('self-table', rep.self, 'self');
+  renderTable('total-table', rep.total, 'total');
+  renderTimeline(rep);
+  flameRoot = rep.flame; flameFocus = rep.flame;
+  renderFlame();
+}
+
+function card(num, label, color) {
+  return '<div class="summary-card"><div class="num" style="color:' + color + '">' + num + '</div><div class="label">' + esc(label) + '</div></div>';
+}
+
+function renderTable(id, frames, field) {
+  const tbody = document.querySelector('#' + id + ' tbody');
+  tbody.innerHTML = '';
+  frames.forEach((f, i) => {
+    const pct = field === 'self' ? f.selfPct : f.totalPct;
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + (i + 1) + '</td>' +
+      '<td class="method" title="' + esc(f.name) + '">' + esc(f.name) + '</td>' +
+      '<td class="num">' + fmtWeight(f[field]) + '</td>' +
+      '<td class="num">' + pct.toFixed(1) + '%</td>' +
+      '<td><div class="bar"><div style="width:' + Math.min(100, pct).toFixed(1) + '%"></div></div></td>';
+    tbody.appendChild(tr);
+  });
+}
+
+function renderTimeline(rep) {
+  const hourly = rep.mode === 'hourly';
+  timelineChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', valueFormatter: v => fmtWeight(v) },
+    legend: { type: 'scroll', bottom: 0, textStyle: { color: '#8b8fa3', fontSize: 11 }, formatter: shortName },
+    grid: { left: 60, right: 20, top: 20, bottom: 40 },
+    xAxis: { type: 'category', data: rep.timestamps.map(t => fmtTime(t, hourly)), axisLabel: { color: '#8b8fa3' } },
+    yAxis: { type: 'value', axisLabel: { color: '#8b8fa3', formatter: v => fmtWeight(v) }, splitLine: { lineStyle: { color: '#2a2d3a' } } },
+    series: rep.series.map(s => ({ name: s.name, type: 'line', smooth: true, showSymbol: false, areaStyle: { opacity: 0.08 }, data: s.values }))
+  }, true);
+}
+
+// ---------- flame graph (ECharts custom series) ----------
+function flatten(node, depth, start, out) {
+  out.push({ value: [depth, start, start + node.value, node.name], node });
+  let offset = start;
+  for (const c of (node.children || [])) {
+    flatten(c, depth + 1, offset, out);
+    offset += c.value;
+  }
+  return out;
+}
+
+function colorFor(name) {
+  if (name === 'all') return '#3a3d4a';
+  if (name.startsWith('new ')) return '#60a5fa';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return 'hsl(' + (10 + h % 35) + ', 80%, ' + (42 + h % 18) + '%)';
+}
+
+function renderFlame() {
+  if (!flameFocus) return;
+  const items = flatten(flameFocus, 0, 0, []);
+  const maxDepth = items.reduce((m, it) => Math.max(m, it.value[0]), 0);
+  const rowH = 18;
+  document.getElementById('flame').style.height = Math.max(320, (maxDepth + 2) * rowH) + 'px';
+  flameChart.resize();
+  const total = flameFocus.value || 1;
+  const rootTotal = flameRoot.value || 1;
+
+  flameChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      formatter: p => {
+        const n = p.data.node;
+        return '<div style="max-width:600px;word-break:break-all"><b>' + esc(n.name) + '</b><br>' +
+          fmtWeight(n.value) + ' · ' + (n.value / rootTotal * 100).toFixed(2) + '% of all' +
+          (flameFocus !== flameRoot ? ' · ' + (n.value / total * 100).toFixed(1) + '% of zoom' : '') + '</div>';
+      }
+    },
+    grid: { left: 0, right: 0, top: 0, bottom: 0 },
+    xAxis: { type: 'value', min: 0, max: total, show: false },
+    yAxis: { type: 'value', min: 0, max: maxDepth + 1, show: false },
+    series: [{
+      type: 'custom',
+      renderItem: (params, api) => {
+        const level = api.value(0);
+        const s = api.coord([api.value(1), level]);
+        const e = api.coord([api.value(2), level]);
+        const h = api.size([0, 1])[1];
+        const w = e[0] - s[0];
+        if (w < 0.5) return;
+        const name = api.value(3);
+        return {
+          type: 'rect',
+          shape: { x: s[0], y: s[1] - h + 1, width: Math.max(w - 1, 0.5), height: h - 2, r: 2 },
+          style: { fill: colorFor(name) },
+          emphasis: { style: { stroke: '#fff', lineWidth: 1 } },
+          textConfig: { position: 'insideLeft', offset: [4, 0] },
+          textContent: w > 30 ? { style: { text: shortName(name), fill: '#fff', fontSize: 11, width: w - 8, overflow: 'truncate' } } : undefined
+        };
+      },
+      encode: { x: [1, 2], y: 0 },
+      data: items
+    }]
+  }, true);
+}
+flameChart.on('click', p => {
+  if (!p.data || !p.data.node) return;
+  flameFocus = p.data.node.name === 'all' ? flameRoot : p.data.node;
+  renderFlame();
+});
+function resetFlame() { flameFocus = flameRoot; renderFlame(); }
+
+// ---------- helpers ----------
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function shortName(name) {
+  if (name.startsWith('new ')) return name;
+  const parts = name.split('.');
+  return parts.length > 2 ? parts.slice(-2).join('.') : name;
+}
+function fmtWeight(v) {
+  if (currentKind === 'alloc') {
+    const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; let n = Number(v);
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+  }
+  return Number(v).toLocaleString();
+}
+function fmtTime(ts, withDate) {
+  const d = new Date(ts);
+  if (isNaN(d)) return ts;
+  const p = n => String(n).padStart(2, '0');
+  const hm = p(d.getHours()) + ':' + p(d.getMinutes());
+  return withDate ? p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + hm : hm;
+}
+
+loadStatus().then(loadReport);
+setInterval(loadStatus, 10000);
+setInterval(() => { if (document.getElementById('auto').checked) loadReport(); }, 30000);
+</script>
+</body></html>

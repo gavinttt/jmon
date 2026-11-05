@@ -298,6 +298,57 @@ func (s *Server) handleProcessAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonResponse(w, data)
 
+	case "hotspot":
+		mode := r.URL.Query().Get("mode")
+		if mode != storage.HotspotModeHourly {
+			mode = storage.HotspotModeDense
+		}
+		kind := r.URL.Query().Get("kind")
+		if kind != collector.HotspotKindAlloc {
+			kind = collector.HotspotKindCPU
+		}
+		topN := queryInt(r, "top", 50)
+		data, err := analyzer.AnalyzeHotspots(s.db, pid, mode, kind, from, to, topN)
+		if err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		jsonResponse(w, data)
+
+	case "hotspot-status":
+		setting, err := s.db.GetHotspotSetting(pid)
+		if err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		stats, err := s.db.QueryHotspotStats(pid)
+		if err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		jsonResponse(w, map[string]interface{}{"setting": setting, "stats": stats})
+
+	case "hotspot-toggle":
+		if r.Method != "POST" {
+			jsonError(w, "method not allowed", 405)
+			return
+		}
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonError(w, "invalid request", 400)
+			return
+		}
+		// The daemon picks the switch up on its next collection cycle: it starts/stops the
+		// JFR recording and suspends jmap for this pid while enabled.
+		if err := s.db.SetHotspotEnabled(pid, body.Enabled); err != nil {
+			jsonError(w, err.Error(), 500)
+			return
+		}
+		setting, _ := s.db.GetHotspotSetting(pid)
+		jsonResponse(w, setting)
+
 	default:
 		jsonError(w, "unknown resource: "+resource, 404)
 	}
@@ -349,6 +400,8 @@ func (s *Server) handleProcessPage(w http.ResponseWriter, r *http.Request) {
 		file = "static/leak_smart.html"
 	case "hotcpu":
 		file = "static/hotcpu.html"
+	case "hotspot":
+		file = "static/hotspot.html"
 	default:
 		http.NotFound(w, r)
 		return

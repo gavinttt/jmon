@@ -114,6 +114,9 @@ func (db *DB) migrate() error {
 			return fmt.Errorf("migration failed: %w\nSQL: %s", err, s)
 		}
 	}
+	if err := db.migrateHotspot(); err != nil {
+		return fmt.Errorf("hotspot migration failed: %w", err)
+	}
 	return nil
 }
 

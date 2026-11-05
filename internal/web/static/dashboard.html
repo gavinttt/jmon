@@ -87,6 +87,7 @@ async function loadProcesses() {
           <a href="/process/${p.PID}/leak" style="color:#ef4444;margin-right:8px">Leak Check</a>
           <a href="/process/${p.PID}/hotcpu" style="color:#f59e0b;margin-right:8px">CPU Hotspot</a>
 <a href="/process/${p.PID}/leak-smart" style="color:#a78bfa;margin-right:8px">Smart Leak</a>
+          <a href="/process/${p.PID}/hotspot" style="color:#22c55e;margin-right:8px">Method Hotspot</a>
         </td>`;
       tbody.appendChild(tr);
     }

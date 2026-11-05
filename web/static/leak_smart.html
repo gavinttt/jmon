@@ -61,6 +61,7 @@
     <a href="#" id="nav-leak">Leak Check</a>
     <a href="#" id="nav-hotcpu">CPU Hotspot</a>
     <a href="#" class="active" id="nav-leak-smart">Smart Leak</a>
+    <a href="#" id="nav-hotspot">Method Hotspot</a>
   </div>
 </div>
 <div class="toolbar">
@@ -111,6 +112,7 @@ document.getElementById('nav-heap').href = '/process/' + pid + '/heap';
 document.getElementById('nav-leak').href = '/process/' + pid + '/leak';
 document.getElementById('nav-hotcpu').href = '/process/' + pid + '/hotcpu';
 document.getElementById('nav-leak-smart').href = '/process/' + pid + '/leak-smart';
+document.getElementById('nav-hotspot').href = '/process/' + pid + '/hotspot';
 
 let allClasses = [];
 let selectedSet = new Set();

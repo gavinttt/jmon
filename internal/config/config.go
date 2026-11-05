@@ -10,6 +10,9 @@ import (
 type Config struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	// JfrPath optionally points to a JDK 11+ `jfr` binary used to parse hotspot recordings.
+	// Needed when the target JVM is JDK 8 (which can record JFR but ships no `jfr` tool).
+	JfrPath string `json:"jfr_path"`
 }
 
 // DefaultConfig returns default configuration
